@@ -127,8 +127,7 @@ class Tools:
         text_frame = ttk.Frame(output)
         text_frame.pack(fill="both", expand=True)
         self.output = tk.Text(text_frame, width=1, height=1, wrap="word", state="disabled", relief="flat",
-                              highlightthickness=1, highlightbackground="#dce4ee", background="#f7f9fc",
-                              foreground="#17273e", padx=9, pady=8, font=("TkFixedFont", -13))
+                              highlightthickness=1, padx=9, pady=8, font=("TkFixedFont", -13))
         scroll = ttk.Scrollbar(text_frame, orient="vertical", command=self.output.yview)
         self.output.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
@@ -160,7 +159,7 @@ class Tools:
             if field.kind == "choice":
                 widget = ttk.Combobox(row, textvariable=value, values=field.choices, state="readonly")
             elif field.kind in ("points", "angles"):
-                widget = tk.Text(row, height=2, width=1, relief="solid", borderwidth=1, undo=True)
+                widget = tk.Text(row, height=2, width=1, relief="flat", highlightthickness=1, undo=True)
             else:
                 widget = ttk.Entry(row, textvariable=value, width=10)
             widget.pack(side="left", fill="x", expand=True)

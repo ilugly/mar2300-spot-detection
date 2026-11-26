@@ -17,13 +17,19 @@ from .cli import detector_offset, scan_reflections, series_frames
 from .gui_tools import Tools
 from .image import read_mar2300
 
-BACKGROUND = "#eef2f7"
-PAPER = "#ffffff"
-INK = "#17273e"
-MUTED = "#536479"
-ACCENT = "#1753bc"
-BORDER = "#dce4ee"
-VIEW = "#111c2c"
+BACKGROUND = "#11161f"
+SURFACE = "#1b2330"
+INPUT = "#141c28"
+INK = "#edf2fa"
+MUTED = "#aabacf"
+DISABLED = "#8292a8"
+BORDER = "#38465b"
+CONTROL = "#273448"
+HOVER = "#32435b"
+HIGHLIGHT = "#304d73"
+FOCUS = "#8cb3ff"
+ACCENT = "#2759b8"
+VIEW = "#0b1018"
 MARK = "#4ce0ed"
 SELECTED = "#ffd26b"
 
@@ -37,38 +43,69 @@ def configure_styles(root):
     style = ttk.Style(root)
     style.theme_use("clam")
     root.configure(background=BACKGROUND)
-    font = ("TkDefaultFont", -14)
-    style.configure(".", font=font, background=PAPER, foreground=INK)
+    style.configure(".", font=("TkDefaultFont", -14), background=SURFACE, foreground=INK,
+                    bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, troughcolor=INPUT,
+                    selectbackground=HIGHLIGHT, selectforeground=INK, focuscolor=FOCUS, arrowcolor=INK)
+    style.map(".", background=[("disabled", SURFACE), ("active", HOVER)],
+              foreground=[("disabled", DISABLED)],
+              selectbackground=[("!focus", HIGHLIGHT)], selectforeground=[("!focus", INK)])
+
     style.configure("App.TFrame", background=BACKGROUND)
-    style.configure("Paper.TFrame", background=PAPER)
-    style.configure("Card.TFrame", background=PAPER, borderwidth=1, relief="solid", bordercolor=BORDER)
+    style.configure("Card.TFrame", background=SURFACE, borderwidth=1, relief="solid")
     style.configure("Hero.TLabel", background=BACKGROUND, font=("TkDefaultFont", -29, "bold"))
     style.configure("Subtitle.TLabel", background=BACKGROUND, foreground=MUTED)
     style.configure("Title.TLabel", font=("TkDefaultFont", -18, "bold"))
     style.configure("Field.TLabel", font=("TkDefaultFont", -13, "bold"))
     style.configure("Muted.TLabel", foreground=MUTED, font=("TkDefaultFont", -13))
     style.configure("Status.TLabel", background=BACKGROUND, foreground=MUTED)
-    style.configure("Error.TLabel", background=BACKGROUND, foreground="#a22332")
+    style.configure("Error.TLabel", background=BACKGROUND, foreground="#ff9aab")
+
     style.configure("TNotebook", background=BACKGROUND, borderwidth=0)
-    style.configure("TNotebook.Tab", padding=(18, 9), background="#e1e8f2", foreground=MUTED)
-    style.map("TNotebook.Tab", background=[("selected", PAPER)], foreground=[("selected", INK)])
-    style.configure("TButton", padding=(10, 6), background="#edf2fa", bordercolor=BORDER,
-                    lightcolor="#edf2fa", darkcolor="#edf2fa")
-    style.map("TButton", background=[("pressed", "#d8e3f4"), ("active", "#e0e9f8")])
-    style.configure("Primary.TButton", background=ACCENT, foreground=PAPER,
-                    bordercolor=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
+    style.configure("TNotebook.Tab", padding=(18, 9), background=BACKGROUND, foreground=MUTED)
+    style.map("TNotebook.Tab", padding=[], lightcolor=[],
+              background=[("selected", SURFACE), ("active", HOVER)],
+              foreground=[("selected", INK), ("active", INK)])
+
+    style.configure("TButton", padding=(10, 6), background=CONTROL, relief="flat")
+    style.map("TButton", background=[("disabled", SURFACE), ("pressed", HIGHLIGHT), ("active", HOVER)],
+              bordercolor=[("focus", FOCUS)], lightcolor=[], darkcolor=[])
+    style.configure("Primary.TButton", background=ACCENT, bordercolor=ACCENT,
                     font=("TkDefaultFont", -14, "bold"))
-    style.map("Primary.TButton",
-              foreground=[("disabled", MUTED), ("!disabled", PAPER)],
-              background=[("disabled", "#e3eaf5"), ("pressed", "#123f92"), ("active", "#1048a9")])
+    style.map("Primary.TButton", background=[("disabled", CONTROL), ("pressed", "#204b9d"), ("active", "#3067c8")])
+
     for name in ("TEntry", "TCombobox", "TSpinbox"):
-        style.configure(name, padding=5, fieldbackground=PAPER, bordercolor=BORDER, arrowsize=13)
-    style.map("TCombobox", fieldbackground=[("readonly", PAPER)], foreground=[("readonly", INK)])
-    style.map("TCheckbutton", background=[("disabled", PAPER)])
-    style.configure("Treeview", rowheight=25, borderwidth=0, fieldbackground=PAPER)
-    style.configure("Treeview.Heading", background="#edf2fa", relief="flat", font=("TkDefaultFont", -13, "bold"))
-    style.map("Treeview", background=[("selected", "#dfeaff")], foreground=[("selected", INK)])
-    style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor="#dce5f2", borderwidth=0)
+        style.configure(name, padding=5, fieldbackground=INPUT, background=CONTROL,
+                        insertcolor=INK, arrowsize=13)
+        style.map(name, background=[("disabled", SURFACE), ("active", HOVER)],
+                  fieldbackground=[("disabled", SURFACE)], foreground=[("disabled", DISABLED)],
+                  bordercolor=[("focus", FOCUS)], lightcolor=[("focus", FOCUS)],
+                  arrowcolor=[("disabled", DISABLED)])
+    style.configure("TCheckbutton", indicatorbackground=INPUT, indicatorforeground=INK)
+    style.map("TCheckbutton", background=[("active", SURFACE)],
+              indicatorbackground=[("disabled", SURFACE), ("selected", ACCENT)],
+              indicatorforeground=[("disabled", DISABLED)])
+
+    style.configure("Treeview", rowheight=25, borderwidth=0, background=INPUT,
+                    fieldbackground=INPUT, stripedbackground=INPUT)
+    style.configure("Treeview.Heading", background=CONTROL, relief="flat", font=("TkDefaultFont", -13, "bold"))
+    style.configure("Treeview.Separator", background=BORDER)
+    style.map("Treeview", background=[("selected", HIGHLIGHT)], foreground=[("selected", INK)],
+              bordercolor=[("focus", FOCUS)])
+    style.configure("TScrollbar", background=CONTROL)
+    style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=INPUT, borderwidth=0)
+
+    # Tk also uses classic widgets for text fields and popup lists.
+    for name in ("Text", "Listbox", "Menu"):
+        root.option_add(f"*{name}.background", INPUT)
+        root.option_add(f"*{name}.foreground", INK)
+        root.option_add(f"*{name}.selectBackground", HIGHLIGHT)
+        root.option_add(f"*{name}.selectForeground", INK)
+        root.option_add(f"*{name}.highlightBackground", BORDER)
+        root.option_add(f"*{name}.highlightColor", FOCUS)
+    root.option_add("*Text.insertBackground", INK)
+    root.option_add("*Menu.activeBackground", HIGHLIGHT)
+    root.option_add("*Menu.activeForeground", INK)
+    root.option_add("*Menu.disabledForeground", DISABLED)
 
 
 def image_preview(path):
@@ -363,7 +400,7 @@ class App:
         canvas.delete("all")
         self.markers.clear()
         if self.preview is None:
-            canvas.create_text(width / 2, height / 2, text="Предпросмотр кадра", fill="#a9b8cd",
+            canvas.create_text(width / 2, height / 2, text="Предпросмотр кадра", fill=MUTED,
                                font=("TkDefaultFont", -16))
             return
 
@@ -397,7 +434,7 @@ class App:
         if zoom:
             note = f"Фрагмент  •  X {left}–{left + preview.width - 1}  ·  Y {top}–{top + preview.height - 1}"
             canvas.create_rectangle(0, height - 26, width, height, fill=VIEW, outline="")
-            canvas.create_text(12, height - 13, text=note, fill=PAPER, anchor="w")
+            canvas.create_text(12, height - 13, text=note, fill=INK, anchor="w")
 
     def detect(self):
         source = self.source
