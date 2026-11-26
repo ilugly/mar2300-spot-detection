@@ -38,7 +38,6 @@ def configure_styles(root):
     style.theme_use("clam")
     root.configure(background=BACKGROUND)
     font = ("TkDefaultFont", -14)
-    root.option_add("*Font", font)
     style.configure(".", font=font, background=PAPER, foreground=INK)
     style.configure("App.TFrame", background=BACKGROUND)
     style.configure("Paper.TFrame", background=PAPER)
@@ -65,6 +64,7 @@ def configure_styles(root):
     for name in ("TEntry", "TCombobox", "TSpinbox"):
         style.configure(name, padding=5, fieldbackground=PAPER, bordercolor=BORDER, arrowsize=13)
     style.map("TCombobox", fieldbackground=[("readonly", PAPER)], foreground=[("readonly", INK)])
+    style.map("TCheckbutton", background=[("disabled", PAPER)])
     style.configure("Treeview", rowheight=25, borderwidth=0, fieldbackground=PAPER)
     style.configure("Treeview.Heading", background="#edf2fa", relief="flat", font=("TkDefaultFont", -13, "bold"))
     style.map("Treeview", background=[("selected", "#dfeaff")], foreground=[("selected", INK)])
@@ -133,8 +133,17 @@ class App:
         ttk.Label(app, text="MAR2300", style="Hero.TLabel").pack(anchor="w")
         ttk.Label(app, text="Поиск дифракционных пятен и выгрузка отражений",
                   style="Subtitle.TLabel").pack(anchor="w", pady=(2, 14))
+
+        footer = ttk.Frame(app, style="App.TFrame")
+        footer.pack(side="bottom", fill="x", pady=(7, 0))
+        self.status_label = ttk.Label(footer, textvariable=self.status, style="Status.TLabel", wraplength=750)
+        self.status_label.pack(side="left")
+        self.progress = ttk.Progressbar(footer, length=152)
+        self.progress.pack(side="right")
+
         pages = ttk.Notebook(app)
         pages.pack(fill="both", expand=True)
+        pages.enable_traversal()
         detect_page = ttk.Frame(pages, padding=12, style="App.TFrame")
         tools_page = ttk.Frame(pages, padding=12, style="App.TFrame")
         pages.add(detect_page, text="Поиск пятен")
@@ -142,12 +151,11 @@ class App:
         self.build_detection(detect_page)
         self.tools = Tools(tools_page, self.task, self.set_status, self.controls)
 
-        footer = ttk.Frame(app, style="App.TFrame")
-        footer.pack(fill="x", pady=(7, 0))
-        self.status_label = ttk.Label(footer, textvariable=self.status, style="Status.TLabel", wraplength=850)
-        self.status_label.pack(side="left")
-        self.progress = ttk.Progressbar(footer, length=152)
-        self.progress.pack(side="right")
+        def run_detection(_event):
+            if pages.select() == str(detect_page):
+                self.detect_button.invoke()
+
+        root.bind("<Control-Return>", run_detection)
 
     def build_detection(self, page):
         page.columnconfigure(0, weight=1)
@@ -209,6 +217,13 @@ class App:
         results.pack(fill="both", expand=True, pady=(10, 0))
         ttk.Label(results, text="Результаты", style="Title.TLabel").pack(anchor="w")
         ttk.Label(results, textvariable=self.result_info, style="Muted.TLabel", wraplength=334).pack(anchor="w", pady=(2, 6))
+        actions = ttk.Frame(results)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        self.save_button = ttk.Button(actions, text="Сохранить DRX…", command=self.save)
+        self.save_button.pack(side="left")
+        self.folder_button = ttk.Button(actions, text="Папка результата", command=self.open_result)
+        self.folder_button.pack(side="right")
+
         table = ttk.Frame(results)
         table.pack(fill="both", expand=True)
         self.table = ttk.Treeview(table, columns=("x", "y", "score"), show="headings",
@@ -223,12 +238,6 @@ class App:
         self.table.bind("<<TreeviewSelect>>", self.select_candidate)
         self.table.bind("<Double-1>", self.show_crop)
 
-        actions = ttk.Frame(results)
-        actions.pack(fill="x", pady=(8, 0))
-        self.save_button = ttk.Button(actions, text="Сохранить DRX…", command=self.save)
-        self.save_button.pack(side="left")
-        self.folder_button = ttk.Button(actions, text="Папка результата", command=self.open_result)
-        self.folder_button.pack(side="right")
         self.update_actions()
 
     def parameter(self, parent, row, column, title, value, choices=()):
@@ -246,11 +255,13 @@ class App:
         row.pack(fill="x", pady=(3, 8))
         entry = ttk.Entry(row, textvariable=value, width=24)
         entry.pack(side="left", fill="x", expand=True)
+        self.root.after_idle(lambda: entry.xview_moveto(1))
 
         def browse():
             path = filedialog.askopenfilename(parent=self.root, filetypes=filetypes)
             if path:
                 value.set(path)
+                entry.xview_moveto(1)
 
         button = ttk.Button(row, text="Обзор…", command=browse)
         button.pack(side="right", padx=(6, 0))
