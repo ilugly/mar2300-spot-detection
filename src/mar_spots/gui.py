@@ -107,6 +107,23 @@ def configure_styles(root):
     root.option_add("*Menu.activeForeground", INK)
     root.option_add("*Menu.disabledForeground", DISABLED)
 
+    if root.tk.call("tk", "windowingsystem") == "x11":
+        # Tk 8.6 gives its file dialog canvas and filenames fixed colors.
+        root.tk.eval("""
+            if {![llength [info commands ::tk::IconList]]} {auto_load ::tk::IconList}
+            if {[info object isa class ::tk::IconList] && ![info object isa class ::marSpotsFileColors]} {
+                oo::class create ::marSpotsFileColors {
+                    method Create {} {
+                        next
+                        my variable canvas fill
+                        $canvas configure -background [ttk::style lookup Treeview -background]
+                        set fill [ttk::style lookup Treeview -foreground]
+                    }
+                }
+                oo::define ::tk::IconList mixin ::marSpotsFileColors
+            }
+        """)
+
 
 def image_preview(path):
     counts = read_mar2300(path).counts
