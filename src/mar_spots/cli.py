@@ -102,12 +102,11 @@ def inspect_drx(
     return result
 
 
-def detect_drx(
-    source: Path, output: Path, offset: tuple[float, float], find_spots: Callable[[np.ndarray], list[dict]],
-) -> dict:
-    """Find candidates in one frame or series and export one reflection list."""
-    if output.exists():
-        raise FileExistsError(f"Output already exists: {output}")
+def scan_reflections(
+    source: Path, offset: tuple[float, float], find_spots: Callable[[np.ndarray], list[dict]],
+    *, on_frame: Callable[[Path, list[dict]], None] | None = None,
+) -> tuple[DrxFile, list[dict]]:
+    """Find candidates in one frame or series and convert them to DRX reflections."""
     paths = series_frames(source) if source.is_dir() else [source]
     if not paths:
         raise ValueError(f"No .mar2300 frames in {source}")
@@ -137,13 +136,25 @@ def detect_drx(
             y = geometry.height - candidate["y"]
             reflections.append(geometry.pick(image, x, y))
         frames.append({"image": str(path), "phi": geometry.phi, "reflections": len(candidates)})
+        if on_frame is not None:
+            on_frame(path, candidates)
 
-    DrxFile(wavelength, reflections).write(output)
+    return DrxFile(wavelength, reflections), frames
+
+
+def detect_drx(
+    source: Path, output: Path, offset: tuple[float, float], find_spots: Callable[[np.ndarray], list[dict]],
+) -> dict:
+    """Find candidates in one frame or series and export one reflection list."""
+    if output.exists():
+        raise FileExistsError(f"Output already exists: {output}")
+    drx, frames = scan_reflections(source, offset, find_spots)
+    drx.write(output)
     return {
         "output": str(output),
-        "wavelength": wavelength,
+        "wavelength": drx.wavelength,
         "offset_mm": offset,
-        "reflections": len(reflections),
+        "reflections": len(drx.reflections),
         "frames": frames,
     }
 
