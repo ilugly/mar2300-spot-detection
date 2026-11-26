@@ -2,16 +2,35 @@
 
 import argparse
 from collections import Counter, defaultdict
+from collections.abc import Callable
 import json
 from math import dist, floor, isclose, isfinite
 from os.path import relpath
 from pathlib import Path
 import sys
 
+import numpy as np
+
 from .dataset import load_manifest, validate_frames
-from .drx import DrxFile
-from .geometry import Geometry
+from .drx import DrxFile, WAVELENGTH_TOLERANCE
+from .geometry import Geometry, calibrate_offset
 from .image import read_mar2300
+
+
+def series_frames(directory: Path) -> list[Path]:
+    return sorted(path for path in directory.iterdir() if path.suffix.lower() == ".mar2300" and path.is_file())
+
+
+def detector_offset(args: argparse.Namespace) -> tuple[float, float]:
+    if args.calibration is None:
+        return tuple(args.offset_mm)
+    calibration = json.loads(args.calibration.read_text(encoding="utf-8-sig"))
+    offset = calibration.get("offset_mm") if isinstance(calibration, dict) else None
+    if not isinstance(offset, list) or len(offset) != 2 or any(
+        type(value) not in (int, float) or not -sys.float_info.max <= value <= sys.float_info.max for value in offset
+    ):
+        raise ValueError(f"{args.calibration}: expected two finite offset_mm values")
+    return float(offset[0]), float(offset[1])
 
 
 def inspect_drx(
@@ -29,7 +48,7 @@ def inspect_drx(
     seen_phi = set()
     max_vector_error = 0.0
     mismatched = []
-    for path in sorted(directory.glob("*.mar2300")):
+    for path in series_frames(directory):
         image = read_mar2300(path)
         geometry = Geometry.from_image(image, offset)
         phi = round(geometry.phi, 4)
@@ -40,7 +59,9 @@ def inspect_drx(
         seen_phi.add(phi)
         points = []
         for index, row in reflections_by_phi.pop(phi, []):
-            if not isclose(geometry.wavelength, reference.wavelength, rel_tol=0, abs_tol=5e-6):
+            if not isclose(
+                geometry.wavelength, reference.wavelength, rel_tol=0, abs_tol=WAVELENGTH_TOLERANCE,
+            ):
                 raise ValueError(f"Wavelength differs between the DRX and {path.name}")
             calculated = geometry.reflection(row.dx, row.dy, row.intensity)
             error = dist((calculated.qx, calculated.qy, calculated.qz), (row.qx, row.qy, row.qz))
@@ -79,6 +100,52 @@ def inspect_drx(
     if verify_pixels:
         result["intensity_mismatches"] = sorted(mismatched)
     return result
+
+
+def detect_drx(
+    source: Path, output: Path, offset: tuple[float, float], find_spots: Callable[[np.ndarray], list[dict]],
+) -> dict:
+    """Find candidates in one frame or series and export one reflection list."""
+    if output.exists():
+        raise FileExistsError(f"Output already exists: {output}")
+    paths = series_frames(source) if source.is_dir() else [source]
+    if not paths:
+        raise ValueError(f"No .mar2300 frames in {source}")
+
+    wavelength = None
+    seen_phi = set()
+    reflections = []
+    frames = []
+    for path in paths:
+        image = read_mar2300(path)
+        try:
+            geometry = Geometry.from_image(image, offset)
+        except ValueError as exc:
+            raise ValueError(f"{path}: {exc}") from exc
+        if wavelength is None:
+            wavelength = geometry.wavelength
+        if not isclose(geometry.wavelength, wavelength, rel_tol=0, abs_tol=WAVELENGTH_TOLERANCE):
+            raise ValueError(f"Wavelength differs within the series: {path}")
+        phi = round(geometry.phi, 4)
+        if phi in seen_phi:
+            raise ValueError(f"Cannot identify a unique frame for PHI={phi}: {path}")
+        seen_phi.add(phi)
+
+        candidates = find_spots(image.counts)
+        for candidate in candidates:
+            x = candidate["x"] + 1
+            y = geometry.height - candidate["y"]
+            reflections.append(geometry.pick(image, x, y))
+        frames.append({"image": str(path), "phi": geometry.phi, "reflections": len(candidates)})
+
+    DrxFile(wavelength, reflections).write(output)
+    return {
+        "output": str(output),
+        "wavelength": wavelength,
+        "offset_mm": offset,
+        "reflections": len(reflections),
+        "frames": frames,
+    }
 
 
 def import_drx(args: argparse.Namespace) -> dict:
@@ -152,6 +219,11 @@ def main(argv: list[str] | None = None) -> int:
     export.add_argument("output", type=Path)
     export.add_argument("--point", type=int, nargs=2, metavar=("X", "Y"), action="append", required=True,
                         help="One-based MVView coordinates, starting at the bottom left")
+    calibrate = commands.add_parser("calibrate-offset", help="Fit detector offsets from reference MVView picks")
+    calibrate.add_argument("image", type=Path)
+    calibrate.add_argument("reference", type=Path)
+    calibrate.add_argument("--point", type=int, nargs=2, metavar=("X", "Y"), action="append", required=True,
+                           help="One-based MVView coordinates, in reference DRX row order")
     drx = commands.add_parser("inspect-drx", help="Match DRX records to frames by PHI and locate them in pixels")
     drx.add_argument("directory", type=Path, help="Directory containing one series")
     drx.add_argument("reference", type=Path)
@@ -177,15 +249,28 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("manifest", type=Path)
     evaluate.add_argument("checkpoint", type=Path)
     evaluate.add_argument("--split", choices=("validation", "test"), default="validation")
+    evaluate.add_argument("--match-radius-px", type=float, help="Distance allowed for a match (default: 5 pixels)")
+    evaluate.add_argument("--details", action="store_true", help="Include counts and missed points for each frame")
     predict = commands.add_parser("predict", help="Rank spot candidates in one frame")
     predict.add_argument("image", type=Path)
     predict.add_argument("checkpoint", type=Path)
-    predict.add_argument("--limit", type=int, default=25)
-    for command in (train, evaluate, predict):
+    detect = commands.add_parser("detect-drx", help="Detect spots and export one frame or a series as DRX")
+    detect.add_argument("input", type=Path, help="A .mar2300 frame or a directory containing one series")
+    detect.add_argument("checkpoint", type=Path)
+    detect.add_argument("output", type=Path)
+    for command in (train, evaluate, predict, detect):
         command.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
-    for command in (export, drx):
-        command.add_argument("--offset-mm", nargs=2, type=float, metavar=("DX", "DY"),
-                             default=(0, 0), help="Effective offsets added to detector coordinates")
+    for command in (predict, detect):
+        command.add_argument("--limit", type=int, default=25, help="Maximum candidates per frame")
+    for command in (evaluate, predict, detect):
+        command.add_argument("--min-score", type=float, default=0.0, help="Minimum model score, from 0 to 1")
+        command.add_argument("--ranking", choices=("cnn", "contrast"), default="contrast" if command is detect else "cnn",
+                             help="Rank by CNN score or include local contrast")
+    for command in (export, drx, detect):
+        calibration = command.add_mutually_exclusive_group()
+        calibration.add_argument("--offset-mm", nargs=2, type=float, metavar=("DX", "DY"),
+                                 default=(0, 0), help="Effective offsets added to detector coordinates")
+        calibration.add_argument("--calibration", type=Path, help="JSON from calibrate-offset for this setup")
     args = parser.parse_args(argv)
     try:
         if args.command == "inspect":
@@ -208,13 +293,17 @@ def main(argv: list[str] | None = None) -> int:
             }
         elif args.command == "export-drx":
             image = read_mar2300(args.image)
-            geometry = Geometry.from_image(image, tuple(args.offset_mm))
+            geometry = Geometry.from_image(image, detector_offset(args))
             reflections = [geometry.pick(image, x, y) for x, y in args.point]
             DrxFile(geometry.wavelength, reflections).write(args.output)
             result = {"output": str(args.output), "reflections": len(reflections)}
+        elif args.command == "calibrate-offset":
+            image = read_mar2300(args.image)
+            offset = calibrate_offset(image, DrxFile.read(args.reference), args.point)
+            result = {"offset_mm": offset, "image": str(args.image), "reference": str(args.reference)}
         elif args.command == "import-drx":
             result = import_drx(args)
-        elif args.command in ("train", "evaluate", "predict"):
+        elif args.command in ("train", "evaluate", "predict", "detect-drx"):
             try:
                 from . import learning
             except ModuleNotFoundError as exc:
@@ -228,13 +317,27 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 model = learning.load_model(args.checkpoint, args.device)
                 if args.command == "evaluate":
-                    result = learning.evaluate(model, load_manifest(args.manifest), args.split)
+                    result = learning.evaluate(
+                        model, load_manifest(args.manifest), args.split,
+                        min_score=args.min_score, ranking=args.ranking,
+                        match_radius=args.match_radius_px if args.match_radius_px is not None else learning.MATCH_RADIUS,
+                        details=args.details,
+                    )
                 else:
-                    counts = read_mar2300(args.image).counts
-                    result = {"image": str(args.image), "candidates": learning.predict(model, counts, args.limit)}
+                    def find_spots(counts):
+                        return learning.predict(
+                            model, counts, args.limit, min_score=args.min_score, ranking=args.ranking,
+                        )
+
+                    if args.command == "detect-drx":
+                        result = detect_drx(args.input, args.output, detector_offset(args), find_spots)
+                        result.update(ranking=args.ranking, min_score=args.min_score, limit=args.limit)
+                    else:
+                        counts = read_mar2300(args.image).counts
+                        result = {"image": str(args.image), "candidates": find_spots(counts)}
         else:
             result = inspect_drx(
-                args.directory, DrxFile.read(args.reference), tuple(args.offset_mm),
+                args.directory, DrxFile.read(args.reference), detector_offset(args),
                 verify_pixels=args.verify_pixels, allow_missing=args.allow_missing,
             )
     except (OSError, ValueError) as exc:

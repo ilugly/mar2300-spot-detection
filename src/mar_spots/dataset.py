@@ -20,6 +20,7 @@ class Frame:
     experiment: str
     split: str
     points: tuple[Point, ...]
+    complete: bool = False
 
 
 def validate_bounds(points: tuple[Point, ...], shape: tuple[int, int]) -> None:
@@ -56,8 +57,9 @@ def load_manifest(path: Path) -> list[Frame]:
 
 
 def _parse_frame(raw: object, directory: Path) -> Frame:
-    if not isinstance(raw, dict) or set(raw) != {"image", "experiment", "split", "points"}:
-        raise ValueError("Expected fields image, experiment, split, points")
+    required = {"image", "experiment", "split", "points"}
+    if not isinstance(raw, dict) or not required <= raw.keys() <= required | {"complete"}:
+        raise ValueError("Expected fields image, experiment, split, points and optional complete")
     image, experiment, split, points = (raw[k] for k in ("image", "experiment", "split", "points"))
     if not isinstance(image, str) or not image.strip():
         raise ValueError("image must be a non-empty path")
@@ -73,7 +75,10 @@ def _parse_frame(raw: object, directory: Path) -> Frame:
     parsed_points = tuple(_parse_point(point) for point in points)
     if len(set(parsed_points)) != len(parsed_points):
         raise ValueError("Duplicate point in the same image")
-    return Frame(image_path.resolve(), experiment.strip(), split, parsed_points)
+    complete = raw.get("complete", not parsed_points)
+    if type(complete) is not bool:
+        raise ValueError("complete must be a boolean")
+    return Frame(image_path.resolve(), experiment.strip(), split, parsed_points, complete)
 
 
 def _parse_point(raw: object) -> Point:

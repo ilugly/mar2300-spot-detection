@@ -5,11 +5,11 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
-from mar_spots.cli import main
+from mar_spots.cli import detect_drx, main
 from mar_spots.dataset import Point, load_manifest
 from mar_spots.drx import DrxFile
 from mar_spots.geometry import Geometry
@@ -82,6 +82,44 @@ class GeometryTest(unittest.TestCase):
             summary = json.loads(report.getvalue())["series"][series.name]
             self.assertEqual(summary["frames"], 2)
             self.assertEqual(summary["reflections_outside_phi_range"], 1)
+
+    def test_detect_drx_uses_calibration_and_keeps_empty_frames(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            frame = root / "a.MAR2300"
+            second = root / "b.mar2300"
+            frame.touch()
+            second.touch()
+            reference = root / "reference.drx"
+            output = root / "detected.drx"
+            expected = Geometry.from_image(self.image, (0.15, -0.5)).pick(self.image, 2, 4)
+            DrxFile(1, [expected]).write(reference)
+            calibration = StringIO()
+            with patch("mar_spots.cli.read_mar2300", return_value=self.image), redirect_stdout(calibration):
+                self.assertEqual(main([
+                    "calibrate-offset", str(frame), str(reference), "--point", "2", "4",
+                ]), 0)
+            self.assertEqual(json.loads(calibration.getvalue())["offset_mm"], [0.15, -0.5])
+
+            other = replace(self.image, header={**self.image.header, "PHI_START": "91", "PHI_END": "93"})
+            with patch("mar_spots.cli.read_mar2300", side_effect=[self.image, other]):
+                finder = Mock(side_effect=[[{"x": 1, "y": 0, "score": 0.9}], []])
+                report = detect_drx(root, output, (0.15, -0.5), finder)
+            self.assertEqual(report["reflections"], 1)
+            self.assertEqual([item["reflections"] for item in report["frames"]], [1, 0])
+            self.assertEqual(DrxFile.read(output).reflections, DrxFile.read(reference).reflections)
+
+    def test_detect_drx_rejects_mixed_wavelengths_without_writing_output(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.mar2300").touch()
+            (root / "b.mar2300").touch()
+            output = root / "detected.drx"
+            other = replace(self.image, header={**self.image.header, "WAVELENGTH": "1.2"})
+            with patch("mar_spots.cli.read_mar2300", side_effect=[self.image, other]):
+                with self.assertRaisesRegex(ValueError, "Wavelength differs"):
+                    detect_drx(root, output, (0, 0), lambda counts: [{"x": 1, "y": 0}])
+            self.assertFalse(output.exists())
 
     def test_rejects_unverified_rotation(self):
         self.image.header["OMEGA_END"] = "1"

@@ -1,9 +1,10 @@
 """Geometry verified for MAR2300 acquisitions at zero chi and omega."""
 
 from dataclasses import dataclass
-from math import cos, hypot, isfinite, radians, sin
+from math import cos, hypot, isclose, isfinite, radians, sin
+from statistics import mean
 
-from .drx import Reflection
+from .drx import DrxFile, Reflection, WAVELENGTH_TOLERANCE
 from .image import DetectorImage
 
 
@@ -84,3 +85,29 @@ class Geometry:
             raise ValueError(f"MVView point ({x}, {y}) is outside the image")
         intensity = int(image.counts[self.height - y, x - 1])
         return self.reflection(*self.detector_mm(x, y), intensity)
+
+
+def calibrate_offset(
+    image: DetectorImage, reference: DrxFile, points: list[tuple[int, int]],
+) -> tuple[float, float]:
+    """Fit detector-plane offsets from ordered MVView picks on one frame."""
+    geometry = Geometry.from_image(image, (0, 0))
+    if not points or len(points) != len(reference.reflections):
+        raise ValueError("Provide one MVView point for each row in the reference DRX, in order")
+    if not isclose(geometry.wavelength, reference.wavelength, rel_tol=0, abs_tol=WAVELENGTH_TOLERANCE):
+        raise ValueError("Reference wavelength differs from the calibration frame")
+
+    offsets = []
+    for index, ((x, y), row) in enumerate(zip(points, reference.reflections), 1):
+        if round(row.phi, 4) != round(geometry.phi, 4):
+            raise ValueError(f"Reference row {index} has a different PHI from the calibration frame")
+        picked = geometry.pick(image, x, y)
+        if picked.intensity != row.intensity:
+            raise ValueError(f"Reference row {index} has a different intensity at ({x}, {y})")
+        offsets.append((row.dx - picked.dx, row.dy - picked.dy))
+
+    dx, dy = zip(*offsets)
+    # MVView writes detector coordinates to four decimal places in millimeters.
+    if max(dx) - min(dx) > 0.00010001 or max(dy) - min(dy) > 0.00010001:
+        raise ValueError("The reference points disagree on the detector offsets")
+    return round(mean(dx), 6), round(mean(dy), 6)

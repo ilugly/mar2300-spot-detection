@@ -5,6 +5,9 @@ from math import isfinite
 from pathlib import Path
 
 
+WAVELENGTH_TOLERANCE = 5e-6
+
+
 @dataclass(frozen=True)
 class Reflection:
     qx: float
@@ -56,5 +59,10 @@ class DrxFile:
                 f"{row.qx:12.7f} {row.qy:12.7f} {row.qz:12.7f} {row.intensity:8d}"
                 f" {row.dx:9.4f} {row.dy:9.4f} {row.phi:9.4f} {row.norm:.7f}"
             )
-        with path.open("x", encoding="utf-8") as stream:
-            stream.write("\n".join(lines) + "\n")
+        stream = path.open("x", encoding="utf-8")
+        try:
+            with stream:
+                stream.write("\n".join(lines) + "\n")
+        except OSError:
+            path.unlink(missing_ok=True)
+            raise
